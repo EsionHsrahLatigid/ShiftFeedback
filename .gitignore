@@ -1,0 +1,7 @@
+/build*/
+/dist/
+/package-root/
+/.cache/
+/.DS_Store
+compile_commands.json
+*.zip

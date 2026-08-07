@@ -1,0 +1,67 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 31,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "engine-debug",
+      "displayName": "DSP engine tests (Debug)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/engine-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "SHIFTFEEDBACK_BUILD_PLUGIN": "OFF",
+        "SHIFTFEEDBACK_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "plugin-release",
+      "displayName": "Standalone, VST3, and AU (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/plugin-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "SHIFTFEEDBACK_BUILD_PLUGIN": "ON",
+        "SHIFTFEEDBACK_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "engine-debug",
+      "configurePreset": "engine-debug",
+      "targets": [
+        "shiftfeedback_engine_tests"
+      ]
+    },
+    {
+      "name": "plugin-release",
+      "configurePreset": "plugin-release",
+      "targets": [
+        "shiftfeedback_engine_tests",
+        "shiftfeedback_bundles"
+      ]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "engine-debug",
+      "configurePreset": "engine-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "plugin-release",
+      "configurePreset": "plugin-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
