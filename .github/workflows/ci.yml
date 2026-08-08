@@ -4,21 +4,110 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
   pull_request:
   workflow_dispatch:
+    inputs:
+      force_heavy:
+        description: Run the macOS and Windows build jobs regardless of changed paths
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  classify:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    outputs:
+      run_heavy: ${{ steps.classify.outputs.run_heavy }}
+      reason: ${{ steps.classify.outputs.reason }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          BASE_REF: ${{ github.base_ref }}
+          FORCE_HEAVY: ${{ inputs.force_heavy }}
+        run: |
+          set -euo pipefail
+
+          run_heavy=true
+          reason=conservative-fallback
+
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            if [[ "$FORCE_HEAVY" == true ]]; then
+              reason=manual-force
+            else
+              run_heavy=false
+              reason=manual-skip
+            fi
+          else
+            base_sha=
+            if [[ "$EVENT_NAME" == pull_request ]]; then
+              if ! git show-ref --verify --quiet "refs/remotes/origin/$BASE_REF"; then
+                git fetch --no-tags origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+              fi
+              base_sha="$(git merge-base "origin/$BASE_REF" HEAD)"
+              reason=pull-request-diff
+            elif [[ "$EVENT_NAME" == push ]] \
+              && [[ -n "$BEFORE_SHA" ]] \
+              && [[ ! "$BEFORE_SHA" =~ ^0+$ ]] \
+              && git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null \
+              && git merge-base --is-ancestor "$BEFORE_SHA" "$AFTER_SHA"; then
+              base_sha="$BEFORE_SHA"
+              reason=push-diff
+            else
+              reason=initial-or-force-push
+            fi
+
+            if [[ -n "$base_sha" ]]; then
+              run_heavy=false
+              while IFS= read -r -d '' changed_path; do
+                case "$changed_path" in
+                  README.md|DESIGN.md|LICENSE|docs/*|.github/ISSUE_TEMPLATE/*)
+                    ;;
+                  *)
+                    run_heavy=true
+                    reason=build-impacting-change
+                    break
+                    ;;
+                esac
+              done < <(git diff --name-only -z "$base_sha" "$AFTER_SHA")
+
+              if [[ "$run_heavy" == false ]]; then
+                reason=docs-only
+              fi
+            fi
+          fi
+
+          {
+            printf 'run_heavy=%s\n' "$run_heavy"
+            printf 'reason=%s\n' "$reason"
+          } >> "$GITHUB_OUTPUT"
+          printf 'run_heavy=%s (%s)\n' "$run_heavy" "$reason"
+
   macos-arm64:
     name: macOS arm64
+    needs: classify
+    if: needs.classify.outputs.run_heavy == 'true'
     runs-on: macos-26
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Configure Debug tests
         run: cmake --preset engine-debug
@@ -33,13 +122,7 @@ jobs:
         run: cmake --preset plugin-release
 
       - name: Build Release bundles
-        run: >
-          cmake --build build/plugin-release --config Release --parallel
-          --target shiftfeedback_engine_tests
-          shiftfeedback_plugin_bridge_tests
-          shiftfeedback_standalone_plugin
-          shiftfeedback_vst3_plugin
-          shiftfeedback_au_plugin
+        run: cmake --build --preset plugin-release --parallel
 
       - name: Run Release tests
         run: ctest --preset plugin-release --output-on-failure
@@ -62,20 +145,30 @@ jobs:
           ditto build/plugin-release/VST3/Release/shiftfeedback_vst3_plugin.vst3 dist/ShiftFeedback-macos-arm64/shiftfeedback_vst3_plugin.vst3
           ditto build/plugin-release/shiftfeedback_au_plugin.component dist/ShiftFeedback-macos-arm64/shiftfeedback_au_plugin.component
           ditto -c -k --sequesterRsrc --keepParent dist/ShiftFeedback-macos-arm64 dist/ShiftFeedback-latest-macos-arm64.zip
+          (
+            cd dist
+            shasum -a 256 ShiftFeedback-latest-macos-arm64.zip \
+              | awk '{ print tolower($1) "  " $2 }' > SHA256SUMS.txt
+          )
 
       - name: Upload macOS latest ZIP
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ShiftFeedback-latest-macos-arm64
-          path: dist/ShiftFeedback-latest-macos-arm64.zip
+          path: |
+            dist/ShiftFeedback-latest-macos-arm64.zip
+            dist/SHA256SUMS.txt
           if-no-files-found: error
+          retention-days: 14
 
   windows-x64:
     name: Windows x64
-    runs-on: windows-2025
+    needs: classify
+    if: needs.classify.outputs.run_heavy == 'true'
+    runs-on: windows-2025-vs2026
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Configure Debug tests
         shell: pwsh
@@ -105,10 +198,9 @@ jobs:
         shell: pwsh
         run: >
           cmake --build build/windows-release --config Release --parallel
-          --target shiftfeedback_engine_tests
+          --target shiftfeedback_bundles
+          shiftfeedback_engine_tests
           shiftfeedback_plugin_bridge_tests
-          shiftfeedback_standalone_plugin
-          shiftfeedback_vst3_plugin
 
       - name: Run Release tests
         shell: pwsh
@@ -120,49 +212,63 @@ jobs:
           $ErrorActionPreference = "Stop"
           Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path dist/ShiftFeedback-windows-x64 | Out-Null
-          $standalone = Get-ChildItem build/windows-release -Recurse -File -Filter shiftfeedback_standalone_plugin.exe | Select-Object -First 1
-          $vst3 = Get-ChildItem build/windows-release -Recurse -Directory -Filter shiftfeedback_vst3_plugin.vst3 | Select-Object -First 1
-          if (-not $standalone) { throw "Missing ShiftFeedback standalone executable" }
-          if (-not $vst3) { throw "Missing ShiftFeedback VST3 bundle" }
+          $standaloneCandidates = @(Get-ChildItem build/windows-release -Recurse -File -Filter shiftfeedback_standalone_plugin.exe)
+          $vst3Candidates = @(Get-ChildItem build/windows-release -Recurse -Directory -Filter shiftfeedback_vst3_plugin.vst3)
+          if ($standaloneCandidates.Count -ne 1) {
+            throw "Expected exactly one ShiftFeedback standalone executable, found $($standaloneCandidates.Count): $($standaloneCandidates.FullName -join ', ')"
+          }
+          if ($vst3Candidates.Count -ne 1) {
+            throw "Expected exactly one ShiftFeedback VST3 bundle, found $($vst3Candidates.Count): $($vst3Candidates.FullName -join ', ')"
+          }
+          $standalone = $standaloneCandidates[0]
+          $vst3 = $vst3Candidates[0]
           Copy-Item $standalone.FullName dist/ShiftFeedback-windows-x64/
           Copy-Item $vst3.FullName dist/ShiftFeedback-windows-x64/ -Recurse
           Compress-Archive -Path dist/ShiftFeedback-windows-x64 -DestinationPath dist/ShiftFeedback-latest-windows-x64.zip -Force
+          $hash = (Get-FileHash dist/ShiftFeedback-latest-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $manifest = Join-Path (Resolve-Path dist) "SHA256SUMS.txt"
+          [IO.File]::WriteAllText(
+            $manifest,
+            "$hash  ShiftFeedback-latest-windows-x64.zip`n",
+            [Text.UTF8Encoding]::new($false))
 
       - name: Upload Windows latest ZIP
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ShiftFeedback-latest-windows-x64
-          path: dist/ShiftFeedback-latest-windows-x64.zip
+          path: |
+            dist/ShiftFeedback-latest-windows-x64.zip
+            dist/SHA256SUMS.txt
           if-no-files-found: error
+          retention-days: 14
 
-  release:
-    name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+  summary:
+    name: CI Summary
+    if: always()
     needs:
+      - classify
       - macos-arm64
       - windows-x64
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-
-      - name: Prepare versioned ZIPs
-        run: |
-          set -euo pipefail
-          version="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/^v//')"
-          cp artifacts/ShiftFeedback-latest-macos-arm64/ShiftFeedback-latest-macos-arm64.zip "ShiftFeedback-$version-macos-arm64.zip"
-          cp artifacts/ShiftFeedback-latest-windows-x64/ShiftFeedback-latest-windows-x64.zip "ShiftFeedback-$version-windows-x64.zip"
-
-      - name: Publish release
+      - name: Verify required CI result
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          RUN_HEAVY: ${{ needs.classify.outputs.run_heavy }}
+          CLASSIFY_REASON: ${{ needs.classify.outputs.reason }}
+          MACOS_RESULT: ${{ needs.macos-arm64.result }}
+          WINDOWS_RESULT: ${{ needs.windows-x64.result }}
         run: |
           set -euo pipefail
-          version="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/^v//')"
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||             gh release create "$GITHUB_REF_NAME" --verify-tag --title "ShiftFeedback $version" --generate-notes
-          gh release upload "$GITHUB_REF_NAME"             "ShiftFeedback-$version-macos-arm64.zip"             "ShiftFeedback-$version-windows-x64.zip"             --clobber
+          printf 'classifier=%s run_heavy=%s reason=%s macos=%s windows=%s\n' \
+            "$CLASSIFY_RESULT" "$RUN_HEAVY" "$CLASSIFY_REASON" "$MACOS_RESULT" "$WINDOWS_RESULT"
+
+          [[ "$CLASSIFY_RESULT" == success ]]
+          if [[ "$RUN_HEAVY" == true ]]; then
+            [[ "$MACOS_RESULT" == success ]]
+            [[ "$WINDOWS_RESULT" == success ]]
+          else
+            [[ "$RUN_HEAVY" == false ]]
+            [[ "$MACOS_RESULT" == skipped ]]
+            [[ "$WINDOWS_RESULT" == skipped ]]
+          fi

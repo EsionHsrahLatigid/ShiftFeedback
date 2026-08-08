@@ -37,4 +37,8 @@ The release preset builds the standalone, VST3, and AUv2 bundles.
 
 ## Continuous integration and releases
 
-GitHub Actions tests and packages macOS 26 arm64 and Windows 2025 x64 builds. It uploads `ShiftFeedback-latest-macos-arm64.zip` and `ShiftFeedback-latest-windows-x64.zip`; a `v*` tag creates or updates one GitHub Release with both versioned ZIPs.
+GitHub Actions runs on pushes to `main`, pull requests, and manual dispatch. A classifier skips the macOS 26 arm64 and Windows 2025 x64 build jobs when a change is limited to project documentation or issue templates; the summary job still runs and verifies that the skip was intentional. Manual dispatch defaults to forcing the full build.
+
+Full CI uploads `ShiftFeedback-latest-macos-arm64.zip` and `ShiftFeedback-latest-windows-x64.zip` plus `SHA256SUMS.txt` manifests with 14-day retention. Actions are pinned by commit SHA.
+
+Release tags do not rebuild. A `vMAJOR.MINOR.PATCH` tag resolves to its target commit, checks that `CMakeLists.txt` declares the same `project(ShiftFeedback VERSION ...)`, finds exactly one successful `main` push CI run for that exact commit SHA, verifies that the two expected artifacts are unexpired, validates strict SHA-256 manifests, creates a draft release if needed, uploads exactly the two versioned ZIP assets, and publishes the draft.

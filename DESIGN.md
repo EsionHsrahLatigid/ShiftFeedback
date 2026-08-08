@@ -16,3 +16,9 @@ The plugin wrapper owns parameter smoothing, preset names, state serialization, 
 Standalone trigger support is processor-owned: the editor writes only atomics for a visible trigger pulse and counted space-key gate edges, and the audio thread consumes those atomics to call the existing monophonic engine trigger path. Button pulse, Space tap, and Space held-gate ownership are tracked separately so one source release cannot cancel another. External MIDI owns the monophonic note while active; when MIDI releases, any still-requested standalone gate is restarted. The render loop does not allocate or lock. The output meter is telemetry only; the audio thread stores one scalar peak per block and the editor polls it from its UI timer.
 
 The DSP engine remains allocation-free on the render path and is testable without YUP.
+
+## CI and release provenance
+
+CI cost is controlled by a path classifier. Documentation-only changes skip the macOS and Windows build jobs while preserving a required summary job that records the classifier reason and enforces the expected skipped or successful state.
+
+Release provenance is artifact promotion, not rebuild. Tags are normalized from `vMAJOR.MINOR.PATCH` to the semantic version, checked against the CMake project version at the tag target commit, and allowed to publish only artifacts from one successful `main` push CI run whose `head_sha` exactly matches that commit. Each platform artifact includes one strict `SHA256SUMS.txt` line for the latest ZIP, and release publication replaces draft assets with exactly the two versioned ZIPs.
