@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.31)
 
 if(APPLE)
-    project(ShiftFeedback VERSION 0.1.1 LANGUAGES C CXX OBJC OBJCXX)
+    project(ShiftFeedback VERSION 0.2.0 LANGUAGES C CXX OBJC OBJCXX)
 else()
-    project(ShiftFeedback VERSION 0.1.1 LANGUAGES C CXX)
+    project(ShiftFeedback VERSION 0.2.0 LANGUAGES C CXX)
 endif()
 
 option(SHIFTFEEDBACK_BUILD_PLUGIN "Build the YUP Standalone/VST3/AU targets" ON)
@@ -115,6 +115,23 @@ if(SHIFTFEEDBACK_BUILD_PLUGIN)
     target_include_directories(shiftfeedback_shared INTERFACE
         "${CMAKE_CURRENT_LIST_DIR}/include"
         "${CMAKE_CURRENT_LIST_DIR}/source")
+
+    if(SHIFTFEEDBACK_BUILD_TESTS)
+        add_executable(shiftfeedback_plugin_bridge_tests
+            tests/ShiftFeedbackPluginBridgeTests.cpp
+            source/violent/plugins/ShiftFeedbackPlugin.cpp)
+        target_link_libraries(shiftfeedback_plugin_bridge_tests PRIVATE shiftfeedback_engine yup::yup_audio_processors)
+        target_compile_definitions(shiftfeedback_plugin_bridge_tests PRIVATE SHIFTFEEDBACK_HEADLESS_TEST=1)
+        target_include_directories(shiftfeedback_plugin_bridge_tests PRIVATE
+            "${CMAKE_CURRENT_LIST_DIR}/include"
+            "${CMAKE_CURRENT_LIST_DIR}/source")
+        target_compile_features(shiftfeedback_plugin_bridge_tests PRIVATE cxx_std_20)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+            target_compile_options(shiftfeedback_plugin_bridge_tests PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+        enable_test_assertions(shiftfeedback_plugin_bridge_tests)
+        add_test(NAME shiftfeedback_plugin_bridge_tests COMMAND shiftfeedback_plugin_bridge_tests)
+    endif()
 
     set(SHIFTFEEDBACK_BUNDLE_TARGETS
         shiftfeedback_standalone_plugin

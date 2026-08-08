@@ -36,6 +36,7 @@ jobs:
         run: >
           cmake --build build/plugin-release --config Release --parallel
           --target shiftfeedback_engine_tests
+          shiftfeedback_plugin_bridge_tests
           shiftfeedback_standalone_plugin
           shiftfeedback_vst3_plugin
           shiftfeedback_au_plugin
@@ -105,6 +106,7 @@ jobs:
         run: >
           cmake --build build/windows-release --config Release --parallel
           --target shiftfeedback_engine_tests
+          shiftfeedback_plugin_bridge_tests
           shiftfeedback_standalone_plugin
           shiftfeedback_vst3_plugin
 

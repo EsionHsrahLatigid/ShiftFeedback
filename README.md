@@ -2,12 +2,15 @@
 
 ShiftFeedback is a YUP audio plugin instrument built from a deterministic C++20 DSP engine. It renders a MIDI-triggered, fixed-Hz frequency-shifted cross-feedback cloud with bounded self-oscillation safeguards.
 
+The standalone editor also includes a built-in `Trigger` pulse, a space-key gate when the editor has keyboard focus, and an output activity meter. External MIDI input is still supported and remains the primary plugin trigger path.
+
 ## Targets
 
 - Standalone app
 - VST3 plugin
 - AUv2 plugin
 - Deterministic DSP regression test executable
+- Plugin bridge regression test executable for the standalone trigger path
 
 Plugin identity:
 

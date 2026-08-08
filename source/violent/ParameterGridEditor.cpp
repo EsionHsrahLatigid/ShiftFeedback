@@ -1,6 +1,7 @@
 #include "violent/ParameterGridEditor.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace violent::plugin
 {
@@ -8,11 +9,15 @@ namespace violent::plugin
 ParameterGridEditor::ParameterGridEditor (yup::AudioProcessor& processor,
                                           yup::StringRef newTitle,
                                           yup::StringRef newWarning,
-                                          std::uint32_t newAccentColor)
+                                          std::uint32_t newAccentColor,
+                                          StandaloneControls newStandaloneControls)
     : title (newTitle)
     , warning (newWarning)
     , accentColor (newAccentColor)
+    , standaloneControls (std::move (newStandaloneControls))
 {
+    setWantsKeyboardFocus (true);
+
     const auto processorParameters = processor.getParameters();
     parameters.assign (processorParameters.begin(), processorParameters.end());
 
@@ -25,6 +30,25 @@ ParameterGridEditor::ParameterGridEditor (yup::AudioProcessor& processor,
     warningLabel->setText (warning, yup::dontSendNotification);
     warningLabel->setJustification (yup::Justification::centerLeft);
     addAndMakeVisible (*warningLabel);
+
+    if (standaloneControls.triggerNote || standaloneControls.setGateHeld || standaloneControls.getOutputPeak)
+    {
+        triggerButton = std::make_unique<yup::TextButton>();
+        triggerButton->setButtonText ("Trigger");
+        triggerButton->setClickingGrabFocus (false);
+        triggerButton->setColor (yup::TextButton::Style::backgroundColorId, yup::Color (accentColor));
+        triggerButton->setColor (yup::TextButton::Style::backgroundPressedColorId, yup::Color (0xffffffffu));
+        triggerButton->setColor (yup::TextButton::Style::textColorId, yup::Color (0xff08100eu));
+        triggerButton->setColor (yup::TextButton::Style::textPressedColorId, yup::Color (0xff08100eu));
+        triggerButton->setColor (yup::TextButton::Style::outlineColorId, yup::Color (0xff25302du));
+        triggerButton->onClick = [this]
+        {
+            if (standaloneControls.triggerNote)
+                standaloneControls.triggerNote();
+            takeKeyboardFocus();
+        };
+        addAndMakeVisible (*triggerButton);
+    }
 
     labels.reserve (parameters.size());
     sliders.reserve (parameters.size());
@@ -39,6 +63,7 @@ ParameterGridEditor::ParameterGridEditor (yup::AudioProcessor& processor,
         labels.push_back (std::move (label));
 
         auto slider = std::make_unique<yup::Slider> (yup::Slider::RotaryVerticalDrag);
+        slider->setClickingGrabFocus (false);
         slider->setRange (parameter->getMinimumValue(),
                           parameter->getMaximumValue(),
                           parameter->isStepped() ? 1.0 : 0.0);
@@ -67,6 +92,11 @@ ParameterGridEditor::ParameterGridEditor (yup::AudioProcessor& processor,
     startTimerHz (30);
 }
 
+ParameterGridEditor::~ParameterGridEditor()
+{
+    setSpaceGateHeld (false);
+}
+
 bool ParameterGridEditor::isResizable() const
 {
     return true;
@@ -90,13 +120,26 @@ void ParameterGridEditor::paint (yup::Graphics& graphics)
     graphics.setFillColor (accentColor);
     graphics.fillRect (0.0f, 0.0f, getWidth(), 5.0f);
 
+    if (triggerButton != nullptr)
+    {
+        const auto level = std::clamp (outputPeak, 0.0f, 1.0f);
+        graphics.setFillColor (0xff151918u);
+        graphics.fillRect (meterBounds);
+        graphics.setFillColor (accentColor);
+        graphics.fillRect (meterBounds.getX(),
+                           meterBounds.getY(),
+                           meterBounds.getWidth() * level,
+                           meterBounds.getHeight());
+        graphics.setStrokeColor (0xff25302du);
+        graphics.strokeRect (meterBounds);
+    }
 }
 
 void ParameterGridEditor::resized()
 {
     constexpr int columns = 5;
     constexpr float margin = 20.0f;
-    constexpr float top = 78.0f;
+    constexpr float top = 120.0f;
     constexpr float gap = 12.0f;
     constexpr float labelHeight = 24.0f;
     constexpr float valueHeight = 24.0f;
@@ -110,6 +153,11 @@ void ParameterGridEditor::resized()
 
     titleLabel->setBounds (24.0f, 12.0f, bounds.getWidth() - 48.0f, 30.0f);
     warningLabel->setBounds (24.0f, 43.0f, bounds.getWidth() - 48.0f, 24.0f);
+    if (triggerButton != nullptr)
+    {
+        triggerButton->setBounds (24.0f, 78.0f, 128.0f, 30.0f);
+        meterBounds = yup::Rectangle<float> (168.0f, 84.0f, std::max (48.0f, bounds.getWidth() - 192.0f), 18.0f);
+    }
 
     for (std::size_t i = 0; i < sliders.size(); ++i)
     {
@@ -128,6 +176,33 @@ void ParameterGridEditor::resized()
     }
 }
 
+void ParameterGridEditor::keyDown (const yup::KeyPress& key, const yup::Point<float>& position)
+{
+    if (key.getKey() == yup::KeyPress::spaceKey)
+    {
+        setSpaceGateHeld (true);
+        return;
+    }
+
+    yup::AudioProcessorEditor::keyDown (key, position);
+}
+
+void ParameterGridEditor::keyUp (const yup::KeyPress& key, const yup::Point<float>& position)
+{
+    if (key.getKey() == yup::KeyPress::spaceKey)
+    {
+        setSpaceGateHeld (false);
+        return;
+    }
+
+    yup::AudioProcessorEditor::keyUp (key, position);
+}
+
+void ParameterGridEditor::focusLost()
+{
+    setSpaceGateHeld (false);
+}
+
 void ParameterGridEditor::timerCallback()
 {
     for (std::size_t i = 0; i < sliders.size(); ++i)
@@ -136,6 +211,22 @@ void ParameterGridEditor::timerCallback()
             sliders[i]->setValue (parameters[i]->getValue(), yup::dontSendNotification);
         valueLabels[i]->setText (parameters[i]->toString(), yup::dontSendNotification);
     }
+
+    if (standaloneControls.getOutputPeak)
+    {
+        outputPeak = std::max (standaloneControls.getOutputPeak(), outputPeak * 0.78f);
+        repaint (meterBounds);
+    }
+}
+
+void ParameterGridEditor::setSpaceGateHeld (bool shouldBeHeld)
+{
+    if (spaceGateHeld == shouldBeHeld)
+        return;
+
+    spaceGateHeld = shouldBeHeld;
+    if (standaloneControls.setGateHeld)
+        standaloneControls.setGateHeld (shouldBeHeld);
 }
 
 } // namespace violent::plugin

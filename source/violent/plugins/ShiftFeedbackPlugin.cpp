@@ -1,11 +1,15 @@
 #include "violent/plugins/ShiftFeedbackPlugin.h"
 
+#if ! SHIFTFEEDBACK_HEADLESS_TEST
 #include "violent/ParameterGridEditor.h"
+#endif
 #include "violent/ProductState.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <utility>
 
 namespace violent::plugin
 {
@@ -16,6 +20,13 @@ constexpr std::array<char, 4> stateMagic { 'S', 'F', 'B', '1' };
 constexpr int stateVersion = 1;
 constexpr int coefficientUpdateCadenceSamples = 16;
 constexpr int numShiftFeedbackParameters = 8;
+constexpr int standaloneTriggerNote = 60;
+constexpr float standaloneTriggerVelocity = 1.0f;
+constexpr float standalonePulseSeconds = 0.08f;
+constexpr float outputPeakScale = 1000000.0f;
+
+static_assert (std::atomic<bool>::is_always_lock_free);
+static_assert (std::atomic<unsigned int>::is_always_lock_free);
 
 using Unit = yup::AudioParameter::ParameterUnit;
 
@@ -157,6 +168,9 @@ void ShiftFeedbackPlugin::prepareToPlay (const yup::AudioSpec& spec)
     }
 
     coefficientUpdateCountdown = 0;
+    lastNote = -1;
+    noteOwner = noNoteOwner;
+    standaloneSpaceGateActive = standaloneGateRequested.load (std::memory_order_acquire);
     updateEngineParameters();
 }
 
@@ -180,6 +194,7 @@ void ShiftFeedbackPlugin::processBlock (yup::AudioProcessContext<float>& context
     const auto midiEnd = context.midi.end();
     auto* left = numChannels > 0 ? audio.getWritePointer (0) : nullptr;
     auto* right = numChannels > 1 ? audio.getWritePointer (1) : nullptr;
+    auto blockPeak = 0.0f;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -189,24 +204,29 @@ void ShiftFeedbackPlugin::processBlock (yup::AudioProcessContext<float>& context
             if (message.isNoteOn())
             {
                 lastNote = std::clamp (message.getNoteNumber(), 0, 127);
+                noteOwner = midiNoteOwner;
                 engine.noteOn (lastNote, message.getVelocity() * (1.0f / 127.0f));
             }
             else if (message.isNoteOff())
             {
                 const auto note = std::clamp (message.getNoteNumber(), 0, 127);
-                if (note == lastNote)
+                if (note == lastNote && noteOwner == midiNoteOwner)
                 {
                     engine.noteOff (note);
                     lastNote = -1;
+                    noteOwner = noNoteOwner;
+                    syncStandaloneNoteState();
                 }
             }
 
             ++midi;
         }
 
+        processStandaloneTriggerCommands();
         advanceParameterHandles (sample);
         updateEngineParametersIfNeeded();
         const auto frame = engine.processSample();
+        blockPeak = std::max ({ blockPeak, std::fabs (frame.left), std::fabs (frame.right) });
 
         if (left != nullptr)
             left[sample] = frame.left;
@@ -215,8 +235,12 @@ void ShiftFeedbackPlugin::processBlock (yup::AudioProcessContext<float>& context
 
         for (int channel = 2; channel < numChannels; ++channel)
             audio.getWritePointer (channel)[sample] = 0.0f;
+
+        advanceStandaloneSourcesAfterSample();
     }
 
+    outputPeakQuantized.store (static_cast<unsigned int> (std::clamp (blockPeak, 0.0f, 1.0f) * outputPeakScale),
+                               std::memory_order_release);
     context.midi.clear();
 }
 
@@ -294,10 +318,42 @@ bool ShiftFeedbackPlugin::hasEditor() const
 
 yup::AudioProcessorEditor* ShiftFeedbackPlugin::createEditor()
 {
+#if SHIFTFEEDBACK_HEADLESS_TEST
+    return nullptr;
+#else
+    ParameterGridEditor::StandaloneControls controls;
+    controls.triggerNote = [this] { triggerStandaloneNote(); };
+    controls.setGateHeld = [this] (bool shouldBeHeld) { setStandaloneGateHeld (shouldBeHeld); };
+    controls.getOutputPeak = [this] { return getOutputPeak(); };
+
     return new ParameterGridEditor (*this,
                                     "ShiftFeedback",
                                     "Warning: self-oscillating feedback network. Keep monitoring level conservative.",
-                                    0xff44d7b6u);
+                                    0xff44d7b6u,
+                                    std::move (controls));
+#endif
+}
+
+void ShiftFeedbackPlugin::triggerStandaloneNote() noexcept
+{
+    standaloneTriggerRequests.fetch_add (1u, std::memory_order_release);
+}
+
+void ShiftFeedbackPlugin::setStandaloneGateHeld (bool shouldBeHeld) noexcept
+{
+    const auto wasHeld = standaloneGateRequested.exchange (shouldBeHeld, std::memory_order_acq_rel);
+    if (wasHeld == shouldBeHeld)
+        return;
+
+    if (shouldBeHeld)
+        standaloneGateOnRequests.fetch_add (1u, std::memory_order_release);
+    else
+        standaloneGateOffRequests.fetch_add (1u, std::memory_order_release);
+}
+
+float ShiftFeedbackPlugin::getOutputPeak() const noexcept
+{
+    return static_cast<float> (outputPeakQuantized.load (std::memory_order_acquire)) / outputPeakScale;
 }
 
 void ShiftFeedbackPlugin::advanceParameterHandles (int samplePosition) noexcept
@@ -307,6 +363,66 @@ void ShiftFeedbackPlugin::advanceParameterHandles (int samplePosition) noexcept
         parameterHandles[i].advanceToSample (samplePosition);
         smoothedValues[i] = parameterHandles[i].getNextValue();
     }
+}
+
+void ShiftFeedbackPlugin::processStandaloneTriggerCommands() noexcept
+{
+    const auto requestedTriggers = standaloneTriggerRequests.exchange (0u, std::memory_order_acq_rel);
+    if (requestedTriggers > 0u)
+        standaloneButtonPulseSamplesRemaining = std::max (standaloneButtonPulseSamplesRemaining,
+                                                          std::max (1, static_cast<int> (standalonePulseSeconds * static_cast<float> (getSampleRate()))));
+
+    const auto gateOnRequests = standaloneGateOnRequests.exchange (0u, std::memory_order_acq_rel);
+    const auto gateOffRequests = standaloneGateOffRequests.exchange (0u, std::memory_order_acq_rel);
+    const auto gateRequested = standaloneGateRequested.load (std::memory_order_acquire);
+
+    if (gateOnRequests > 0u && ! gateRequested)
+        standaloneSpaceTapSamplesRemaining = std::max (standaloneSpaceTapSamplesRemaining,
+                                                       std::max (1, static_cast<int> (standalonePulseSeconds * static_cast<float> (getSampleRate()))));
+
+    if (gateRequested || gateOnRequests > gateOffRequests)
+        standaloneSpaceGateActive = true;
+    else if (gateOffRequests > 0u)
+        standaloneSpaceGateActive = false;
+
+    syncStandaloneNoteState();
+}
+
+void ShiftFeedbackPlugin::advanceStandaloneSourcesAfterSample() noexcept
+{
+    if (standaloneButtonPulseSamplesRemaining > 0)
+        --standaloneButtonPulseSamplesRemaining;
+    if (standaloneSpaceTapSamplesRemaining > 0)
+        --standaloneSpaceTapSamplesRemaining;
+
+    syncStandaloneNoteState();
+}
+
+void ShiftFeedbackPlugin::syncStandaloneNoteState() noexcept
+{
+    if (noteOwner == midiNoteOwner)
+        return;
+
+    if (hasActiveStandaloneSource())
+    {
+        if (noteOwner != standaloneNoteOwner)
+        {
+            engine.noteOn (standaloneTriggerNote, standaloneTriggerVelocity);
+            noteOwner = standaloneNoteOwner;
+        }
+    }
+    else if (noteOwner == standaloneNoteOwner)
+    {
+        engine.noteOff (standaloneTriggerNote);
+        noteOwner = noNoteOwner;
+    }
+}
+
+bool ShiftFeedbackPlugin::hasActiveStandaloneSource() const noexcept
+{
+    return standaloneButtonPulseSamplesRemaining > 0
+        || standaloneSpaceTapSamplesRemaining > 0
+        || standaloneSpaceGateActive;
 }
 
 void ShiftFeedbackPlugin::updateEngineParameters() noexcept
@@ -339,7 +455,12 @@ void ShiftFeedbackPlugin::resetEngine() noexcept
 {
     engine.reset (1u);
     lastNote = -1;
+    standaloneButtonPulseSamplesRemaining = 0;
+    standaloneSpaceTapSamplesRemaining = 0;
     coefficientUpdateCountdown = 0;
+    noteOwner = noNoteOwner;
+    standaloneSpaceGateActive = standaloneGateRequested.load (std::memory_order_acquire);
+    outputPeakQuantized.store (0u, std::memory_order_release);
 }
 
 } // namespace violent::plugin
