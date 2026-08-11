@@ -78,12 +78,12 @@ if(SHIFTFEEDBACK_BUILD_PLUGIN)
         TARGET_NAME shiftfeedback
         TARGET_VERSION ${PROJECT_VERSION}
         TARGET_IDE_GROUP "ShiftFeedback"
-        TARGET_APP_ID "audio.2bit.shiftfeedback"
-        TARGET_APP_NAMESPACE "audio.2bit"
+        TARGET_APP_ID "jp.ehl.shiftfeedback"
+        TARGET_APP_NAMESPACE "jp.ehl"
         TARGET_CXX_STANDARD 20
-        PLUGIN_ID "audio.2bit.ShiftFeedback"
+        PLUGIN_ID "jp.ehl.shiftfeedback"
         PLUGIN_NAME "ShiftFeedback"
-        PLUGIN_VENDOR "2bit"
+        PLUGIN_VENDOR "ehl_"
         PLUGIN_EMAIL ""
         PLUGIN_VERSION "${PROJECT_VERSION}"
         PLUGIN_DESCRIPTION "Fixed-Hz frequency-shifted cross-feedback cloud"
@@ -94,7 +94,7 @@ if(SHIFTFEEDBACK_BUILD_PLUGIN)
         PLUGIN_CREATE_VST3 ON
         PLUGIN_CREATE_AU ${SHIFTFEEDBACK_CREATE_AU}
         PLUGIN_AU_SUBTYPE "SfBk"
-        PLUGIN_AU_MANUFACTURER "2Bit"
+        PLUGIN_AU_MANUFACTURER "EHL1"
         PLUGIN_AU_SANDBOX_SAFE ON
         PLUGIN_CREATE_AUv3 OFF
         PLUGIN_CREATE_LV2 OFF

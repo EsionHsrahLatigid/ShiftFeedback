@@ -14,8 +14,8 @@ The standalone editor also includes a built-in `Trigger` pulse, a space-key gate
 
 Plugin identity:
 
-- App ID: `audio.2bit.shiftfeedback`
-- Plugin ID: `audio.2bit.ShiftFeedback`
+- App ID: `jp.ehl.shiftfeedback`
+- Plugin ID: `jp.ehl.shiftfeedback`
 - AU subtype: `SfBk`
 - AU manufacturer: `2Bit`
 
