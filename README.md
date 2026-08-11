@@ -17,7 +17,7 @@ Plugin identity:
 - App ID: `jp.ehl.shiftfeedback`
 - Plugin ID: `jp.ehl.shiftfeedback`
 - AU subtype: `SfBk`
-- AU manufacturer: `2Bit`
+- AU manufacturer: `EHL1`
 
 ## Build
 
@@ -33,7 +33,7 @@ cmake --build --preset plugin-release
 ctest --preset plugin-release
 ```
 
-The release preset builds the standalone, VST3, and AUv2 bundles.
+The release preset builds the standalone, VST3, and AUv2 bundles, then stages human-facing products under `artifacts/plugin-release/<platform-arch>/{standalone,vst3,au}`. macOS CI uses `macos-arm64`; Windows uses `windows-x64` without AU. `build/` remains CMake's internal workspace.
 
 ## Continuous integration and releases
 

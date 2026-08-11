@@ -143,6 +143,15 @@ if(SHIFTFEEDBACK_BUILD_PLUGIN)
     add_custom_target(shiftfeedback_bundles
         DEPENDS ${SHIFTFEEDBACK_BUNDLE_TARGETS})
 
+    include(cmake/EhlYupArtifactLayout.cmake)
+    ehl_yup_add_artifact_target(
+        TARGET ehl_stage_products
+        PRODUCT ShiftFeedback
+        SLUG shiftfeedback
+        STANDALONE_TARGET shiftfeedback_standalone_plugin
+        VST3_TARGET shiftfeedback_vst3_plugin
+        AU_TARGET shiftfeedback_au_plugin)
+
     if(APPLE AND SHIFTFEEDBACK_ADHOC_SIGN)
         find_program(SHIFTFEEDBACK_CODESIGN_EXECUTABLE codesign REQUIRED)
         add_custom_command(TARGET shiftfeedback_vst3_plugin POST_BUILD

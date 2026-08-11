@@ -45,7 +45,7 @@
       "targets": [
         "shiftfeedback_engine_tests",
         "shiftfeedback_plugin_bridge_tests",
-        "shiftfeedback_bundles"
+        "ehl_stage_products"
       ]
     }
   ],

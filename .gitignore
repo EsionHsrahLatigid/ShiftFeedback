@@ -1,4 +1,5 @@
 /build*/
+/artifacts/
 /dist/
 /package-root/
 /.cache/
