@@ -329,7 +329,7 @@ yup::AudioProcessorEditor* ShiftFeedbackPlugin::createEditor()
     return new ParameterGridEditor (*this,
                                     "ShiftFeedback",
                                     "Warning: self-oscillating feedback network. Keep monitoring level conservative.",
-                                    0xff44d7b6u,
+                                    0xfff2f2f0u,
                                     std::move (controls));
 #endif
 }

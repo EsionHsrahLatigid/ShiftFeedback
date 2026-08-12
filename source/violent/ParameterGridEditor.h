@@ -7,6 +7,11 @@
 #include <memory>
 #include <vector>
 
+namespace ehl::ui
+{
+class StripMeter;
+}
+
 namespace violent::plugin
 {
 
@@ -45,12 +50,11 @@ private:
 
     yup::String title;
     yup::String warning;
-    std::uint32_t accentColor = 0xffff3300u;
     StandaloneControls standaloneControls;
     std::unique_ptr<yup::Label> titleLabel;
     std::unique_ptr<yup::Label> warningLabel;
     std::unique_ptr<yup::TextButton> triggerButton;
-    yup::Rectangle<float> meterBounds;
+    std::unique_ptr<ehl::ui::StripMeter> outputMeter;
     std::vector<yup::AudioParameter::Ptr> parameters;
     std::vector<std::unique_ptr<yup::Label>> labels;
     std::vector<std::unique_ptr<yup::Slider>> sliders;
